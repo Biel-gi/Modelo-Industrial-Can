@@ -1,0 +1,61 @@
+#include <SPI.h>
+#include <mcp2515.h>
+
+struct can_frame canMsg;
+MCP2515 mcp2515(10);
+const uint8_t MY_ID = 0x02;
+const int POT = A0;
+const int LDR = A1;
+const int Touch = 4;
+
+void setup() {
+  Serial.begin(115200);
+  mcp2515.reset();
+  mcp2515.setBitrate(CAN_500KBPS);
+  mcp2515.setNormalMode();
+  pinMode(POT, INPUT);
+  pinMode(Touch, INPUT);
+  pinMode(LDR, INPUT);
+}
+
+void loop() {
+  int PotValue = map(analogRead(POT), 0, 1023, 0, 255);
+  int LDRValue = map(analogRead(LDR), 0, 800, 0, 12); // Corrigido para 0-1023
+  int TouchValue = digitalRead(Touch);
+        Serial.print("Valor do potenciômetro: ");
+        Serial.println(PotValue);
+        Serial.print("Estado do Sensor Touch: ");
+        Serial.println(TouchValue ? "ON" : "OFF");
+        Serial.print("Valor do LDR: ");
+        Serial.println(LDRValue);
+
+  if (mcp2515.readMessage(&canMsg) == MCP2515::ERROR_OK) {
+    Serial.print("Escravo 2 recebeu - ID: ");
+    Serial.println(canMsg.can_id, HEX);
+    if (canMsg.can_id == MY_ID) {
+      if (canMsg.data[0] == 0x50) { // 'P'
+        Serial.print("Valor do potenciômetro: ");
+        Serial.println(PotValue);
+        Serial.print("Estado do Sensor Touch: ");
+        Serial.println(TouchValue ? "ON" : "OFF");
+        Serial.print("Valor do LDR: ");
+        Serial.println(LDRValue);
+        
+        struct can_frame response;
+        response.can_id = 0x00;
+        response.can_dlc = 5;
+        response.data[0] = 0x52; // 'R'
+        response.data[1] = MY_ID;
+        response.data[2] = PotValue; // Corrigido para enviar o valor
+        response.data[3] = TouchValue;
+        response.data[4] = LDRValue; // Corrigido para enviar o valor
+        
+        if (mcp2515.sendMessage(&response) == MCP2515::ERROR_OK) {
+          Serial.println("Resposta enviada ao Mestre");
+        } else {
+          Serial.println("Erro ao enviar resposta");
+        }
+      }
+    }
+  }
+}
