@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Bridge RaspberryPi ? Arduino
+
+  Registra todos os prints deste script em `serial_log.json`
+   (ultimas 200 linhas) para o site mostrar.
+  Armazena sensores em `dados.json`.
+ Quando `estado_modo.json` tem `"modo_manual": true`, l
+   `comando.json` e envia:
+   M,<motor>,<buzzer>,<led1>,<led2>,<led3>\n
+Quando o modo manual volta a false, envia "AUTO\n" uma unica vez.
+
+Este script NUNCA altera `comando.json`.
+"""
+
+import json, re, time, sys
+from datetime import datetime
+from pathlib import Path
+import serial
+
+# ---------- CONFIGURAÃ‡AO SERIAL ----------
+SERIAL_PORT = "/dev/ttyACM0"
+BAUD_RATE   = 115200
+SER_TIMEOUT = 1.0
+
+try:
+    ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=SER_TIMEOUT)
+except serial.SerialException as e:
+    sys.exit(f"[ERRO] Porta serial: {e}")
+
+time.sleep(3)          # aguarda reset do Arduino
+ser.reset_input_buffer()
+
+# ---------- LOG PARA O SITE ----------
+LOG_PATH       = Path("serial_log.json")
+LOG_MAX_LINES  = 200
+
+def salvar_log(msg: str) -> None:
+    try:
+        linhas = json.loads(LOG_PATH.read_text()) if LOG_PATH.exists() else []
+    except json.JSONDecodeError:
+        linhas = []
+    linhas.append({"ts": datetime.now().strftime("%H:%M:%S"), "msg": msg})
+    linhas = linhas[-LOG_MAX_LINES:]
+    LOG_PATH.write_text(json.dumps(linhas, ensure_ascii=False))
+
+# substitui o print padrao
+def log(*args, **kwargs):
+    txt = " ".join(map(str, args))
+    print(txt, **kwargs)
+    salvar_log(txt)
+
+# ---------- FUNCOES AUXILIARES ----------
+def modo_manual_ativo() -> bool:
+    try:
+        with open("estado_modo.json") as f:
+            return json.load(f).get("modo_manual", False)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return False
+
+def parse_serial_line(b: bytes):
+    t = b.decode("utf-8", "ignore").rstrip()
+    d = {}
+    if m := re.search(r"Valor do potenciometro: (\d+)", t):
+        d["potenciometro"] = int(m.group(1))
+    if m := re.search(r"Valor do touch: (ON|OFF)", t):
+        d["touch"] = m.group(1)
+    if m := re.search(r"Valor do LDR: (\d+)", t):
+        d["ldr"] = int(m.group(1))
+    return t, d
+
+def salvar_dados(row: dict, max_hist=100):
+    p = Path("dados.json")
+    try:
+        hist = json.loads(p.read_text()) if p.exists() else []
+    except json.JSONDecodeError:
+        hist = []
+    row["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    hist.append(row)
+    p.write_text(json.dumps(hist[-max_hist:], indent=4))
+
+# ---------- ENVIO DE COMANDOS ----------
+_last_cmd_sent   = None
+_last_manual_flag = None
+
+def serial_send(msg: str):
+    ser.write(msg.encode())
+    log(f"[TX] {repr(msg)}")
+
+def verificar_e_enviar_comando():
+    global _last_cmd_sent
+    try:
+        data = json.loads(Path("comando.json").read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return
+    if not data.get("enviar"):
+        return
+    cmd = f"M,{data['motor']},{data['buzzer']},{data['led1']}," \
+          f"{data['led2']},{data['led3']}\n"
+    if cmd == _last_cmd_sent:
+        return
+    serial_send(cmd)
+    _last_cmd_sent = cmd
+
+# ---------- LOOP PRINCIPAL ----------
+log(f"[INFO] Conexao serial em {SERIAL_PORT} @ {BAUD_RATE} bps")
+log("[INFO] Loop principal iniciado (Ctrl+C para sair)")
+
+buffer = {}
+
+try:
+    while True:
+        time.sleep(0.02)
+
+        # detecta mudanÃ§a de modo
+        manual_now = modo_manual_ativo()
+        if _last_manual_flag is None:
+            _last_manual_flag = manual_now
+        elif manual_now != _last_manual_flag:
+            if not manual_now:
+                serial_send("AUTO\n")
+                _last_cmd_sent = None
+            _last_manual_flag = manual_now
+
+        # se em manual, envia comandos
+        if manual_now:
+            verificar_e_enviar_comando()
+
+        # leitura de sensores
+        if ser.in_waiting:
+            raw = ser.readline()
+            texto, sens = parse_serial_line(raw)
+            if sens:
+                buffer.update(sens)
+                if all(k in buffer for k in ("potenciometro", "touch", "ldr")):
+                    log("[INFO] Dados completos:", buffer)
+                    salvar_dados(buffer)
+                    buffer = {}
+            else:
+                log(texto)
+
+except KeyboardInterrupt:
+    log("[INFO] Encerrando ")
+finally:
+    ser.close()
+    log("[INFO] Porta serial fechada")
+        
