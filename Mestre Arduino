@@ -1,0 +1,66 @@
+#include <SPI.h>
+#include <mcp2515.h>
+
+struct can_frame canMsg1;
+struct can_frame canMsg2;
+MCP2515 mcp2515(10);
+
+void setup() {
+  Serial.begin(115200);
+  mcp2515.reset();
+  mcp2515.setBitrate(CAN_500KBPS);
+  mcp2515.setNormalMode();
+  Serial.println("Mestre CAN inicializado");
+}
+
+void loop() {
+  // Envia pedido ao Escravo 2
+  canMsg1.can_id = 0x02;
+  canMsg1.can_dlc = 2;
+  canMsg1.data[0] = 0x50; // 'P'
+  canMsg1.data[1] = 0x02;
+  if (mcp2515.sendMessage(&canMsg1) == MCP2515::ERROR_OK) {
+    Serial.println("Pedido enviado ao Escravo 2 (potenciômetro)");
+  } else {
+    Serial.println("Erro ao enviar pedido ao Escravo 2");
+  }
+
+  // Aguarda resposta do Escravo 2
+  unsigned long timeout = millis() + 3000;
+  bool received = false;
+  while (millis() < timeout) {
+    if (mcp2515.readMessage(&canMsg2) == MCP2515::ERROR_OK) {
+      Serial.print("Mestre recebeu - ID: ");
+      Serial.println(canMsg2.can_id, HEX);
+      if (canMsg2.can_id == 0x00 && canMsg2.data[1] == 0x02) {
+        uint8_t potValue = canMsg2.data[2];
+        Serial.print("Valor do potenciometro: ");
+        Serial.println(potValue);
+        uint8_t TouchValue = canMsg2.data[3];
+        Serial.print("Valor do touch: ");
+        Serial.println(TouchValue ? "ON" : "OFF");
+        uint8_t LDRValue = canMsg2.data[4];
+        Serial.print("Valor do LDR: ");
+        Serial.println(LDRValue);
+      
+        
+        // Envia para Escravo 1
+        canMsg1.can_id = 0x01; // Usando canMsg1 para consistência
+        canMsg1.can_dlc = 5;
+        canMsg1.data[0] = 0x4C; // 'L'
+        canMsg1.data[1] = 0x01;
+        canMsg1.data[2] = potValue;
+        canMsg1.data[3] = TouchValue;
+        canMsg1.data[4] = LDRValue;
+        if (mcp2515.sendMessage(&canMsg1) == MCP2515::ERROR_OK) {
+          Serial.println("Valor enviado ao Escravo 1");
+        } else {
+          Serial.println("Erro ao enviar para Escravo 1");
+        }
+        received = true;
+        break;
+      }
+    }
+  }
+  if (!received) Serial.println("Nenhuma resposta do Escravo 2");
+}
