@@ -1,0 +1,73 @@
+#include <SPI.h>
+#include <mcp2515.h>
+
+struct can_frame canMsg;
+MCP2515 mcp2515(10);
+const uint8_t MY_ID = 0x01;
+const int LED1 = 3;
+const int LED2 = 5;
+const int LED3 = 6;
+const int Buzz = 7;
+const int PWM = 9;
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(LED1, OUTPUT);
+  pinMode(LED2, OUTPUT);
+  pinMode(LED3, OUTPUT);
+  pinMode(Buzz, OUTPUT);
+  pinMode(PWM, OUTPUT);
+  mcp2515.reset();
+  mcp2515.setBitrate(CAN_500KBPS);
+  mcp2515.setNormalMode();
+  Serial.println("Escravo 1 inicializado");
+}
+
+void loop() {
+  if (mcp2515.readMessage(&canMsg) == MCP2515::ERROR_OK) {
+    Serial.print("Escravo 1 recebeu - ID: ");
+    Serial.println(canMsg.can_id, HEX);
+    if (canMsg.can_id == MY_ID) {
+      if (canMsg.data[0] == 0x4C) { // 'L'
+        
+        uint8_t LDRValue = canMsg.data[4];
+        uint8_t LED_M_1 = canMsg.data[5];
+        uint8_t LED_M_2 = canMsg.data[6];
+        uint8_t LED_M_3 = canMsg.data[7];
+
+        Serial.print("Valor recebido para LEDs (LDR): ");
+        Serial.println(LDRValue);
+
+        digitalWrite(LED1, LED_M_1 == 1 ? HIGH : LOW);
+        digitalWrite(LED2, LED_M_2 == 1 ? HIGH : LOW);
+        digitalWrite(LED3, LED_M_3 == 1 ? HIGH : LOW);
+
+        Serial.print(" LED1: "); Serial.print(LED_M_1 == 1 ? "ON" : "OFF");
+        Serial.print(" LED2: "); Serial.print(LED_M_2 == 1 ? "ON" : "OFF");
+        Serial.print(" LED3: "); Serial.println(LED_M_3 == 1 ? "ON" : "OFF");
+
+      if (canMsg.data[4] < 100) {
+        digitalWrite(LED1, LDRValue < 3 ? HIGH : LOW);
+        digitalWrite(LED2, LDRValue < 7 ? HIGH : LOW);
+        digitalWrite(LED3, LDRValue < 11 ? HIGH : LOW);
+
+        Serial.print(" LED1: "); Serial.print(LDRValue < 3 ? "ON" : "OFF");
+        Serial.print(" LED2: "); Serial.print(LDRValue < 7 ? "ON" : "OFF");
+        Serial.print(" LED3: "); Serial.println(LDRValue < 11 ? "ON" : "OFF");
+      }
+        uint8_t TouchValue = canMsg.data[3];
+        Serial.print("Valor recebido para Buzzer: ");
+        Serial.println(TouchValue ? "ON" : "OFF");
+        digitalWrite(Buzz, TouchValue ? HIGH : LOW);
+        
+        uint32_t PotValue = canMsg.data[2];
+        Serial.print("Valor do potenciômetro: ");
+        Serial.println(PotValue);
+        analogWrite(PWM, PotValue); // PWM controlado pelo potenciômetro
+
+
+
+      }
+    }
+  }
+}
