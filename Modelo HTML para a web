@@ -1,1 +1,245 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <title>Leitura de Sensores</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .led {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            margin-right: 10px;
+            opacity: 0.2;
+            transition: opacity 0.3s;
+        }
+        .led-vermelho { background-color: red; }
+        .led-azul { background-color: blue; }
+        .led-verde { background-color: green; }
+        .led-on { opacity: 1; }
+    </style>
+</head>
+<body>
+<div class="container mt-4">
+    <h1 class="mb-4">Leitura de Sensores em Tempo Real</h1>
+
+    <div class="mb-4">
+        <ul class="list-group" id="dados-lista">
+            <li class="list-group-item"><strong>Potenciometro:</strong> <span id="potenciometro"></span></li>
+            <li class="list-group-item"><strong>Touch:</strong> <span id="touch"></span></li>
+            <li class="list-group-item"><strong>LDR:</strong> <span id="ldr"></span></li>
+            <li class="list-group-item"><strong>Timestamp:</strong> <span id="timestamp"></span></li>
+        </ul>
+    </div>
+
+    <div class="mb-4">
+        <h5>Indicadores LED (simulados)</h5>
+        <div class="d-flex">
+            <div id="led-vermelho" class="led led-vermelho"></div>
+            <div id="led-azul" class="led led-azul"></div>
+            <div id="led-verde" class="led led-verde"></div>
+        </div>
+    </div>
+
+    <div class="mb-3">
+        <button id="toggleModo" class="btn btn-primary">Modo: Automatico</button>
+    </div>
+
+    <div class="mb-4">
+        <h5>Modo Manual</h5>
+        <div class="mb-3">
+            <label for="motor" class="form-label">Velocidade do Motor (PWM): <span id="pwm-value">0</span></label>
+            <input type="range" class="form-range" id="motor" min="0" max="255" value="0">
+        </div>
+        
+        <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" id="buzzer">
+            <label class="form-check-label" for="buzzer">Ativar Buzzer</label>
+        </div>
+        
+        <div class="mb-3">
+            <label>LEDs:</label><br>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="checkbox" id="led-vermelho-manual">
+                <label class="form-check-label" for="led-vermelho-manual">Vermelho</label>
+            </div>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="checkbox" id="led-azul-manual">
+                <label class="form-check-label" for="led-azul-manual">Azul</label>
+            </div>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="checkbox" id="led-verde-manual">
+                <label class="form-check-label" for="led-verde-manual">Verde</label>
+            </div>
+        </div>
+    </div>
+
+    <canvas id="grafico" height="100"></canvas>
+</div>
+<button id="btn-console" class="btn btn-secondary mb-2">Ver console</button>
+<pre id="serial-console"
+     style="display:none;background:#000;color:#0f0;height:200px;
+            overflow-y:scroll;padding:8px;font-size:12px;"></pre>
+
+<script>
+    // Setup do grafico
+const ctx = document.getElementById('grafico').getContext('2d');
+const chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+        labels: [],
+        datasets: [
+            { label: 'Potenciometro', borderColor: 'blue', data: [], tension: 0.3 },
+            { label: 'LDR', borderColor: 'green', data: [], tension: 0.3 }
+        ]
+    },
+    options: { responsive: true, scales: { y: { beginAtZero: true } } }
+});
+
+// Atualiza indicadores LED
+function atualizarLEDs(ldr) {
+    ['vermelho','azul','verde'].forEach(color => {
+        document.getElementById(`led-${color}`).classList.remove('led-on');
+    });
+    if (ldr < 11) document.getElementById('led-verde').classList.add('led-on');
+    if (ldr < 7)  document.getElementById('led-azul').classList.add('led-on');
+    if (ldr < 3)  document.getElementById('led-vermelho').classList.add('led-on');
+}
+
+// Fetch dados e atualiza grafico e indicadores
+async function atualizarDados() {
+    const res = await fetch('/dados');
+    const dados = await res.json();
+    document.getElementById('potenciometro').innerText = dados.potenciometro ?? '-';
+    document.getElementById('touch').innerText       = dados.touch         ?? '-';
+    document.getElementById('ldr').innerText         = dados.ldr           ?? '-';
+    document.getElementById('timestamp').innerText   = dados.timestamp     ?? '-';
+    if (typeof dados.ldr === 'number') atualizarLEDs(dados.ldr);
+    if (dados.timestamp && chart.data.labels.at(-1) !== dados.timestamp) {
+        chart.data.labels.push(dados.timestamp);
+        chart.data.datasets[0].data.push(dados.potenciometro ?? null);
+        chart.data.datasets[1].data.push(dados.ldr           ?? null);
+        if (chart.data.labels.length > 20) {
+            chart.data.labels.shift();
+            chart.data.datasets.forEach(ds => ds.data.shift());
+        }
+        chart.update();
+    }
+}
+// Envia comando manual
+function enviarComandoManual() {
+    const motor  = +document.getElementById('motor').value;
+    const buzzer = document.getElementById('buzzer').checked ? 1 : 0;
+    const led1   = document.getElementById('led-vermelho-manual').checked ? 1 : 0;
+    const led2   = document.getElementById('led-azul-manual').checked       ? 1 : 0;
+    const led3   = document.getElementById('led-verde-manual').checked      ? 1 : 0;
+    document.getElementById('pwm-value').innerText = motor;
+    fetch('/comando', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ motor, buzzer, led1, led2, led3 })
+    })
+    .then(r => r.ok ? r.json() : r.json().then(e=>Promise.reject(e)))
+    .then(console.log).catch(console.error);
+}
+
+// Controle do modo automatico/manual
+const btnModo = document.getElementById('toggleModo');
+let modoManual = false;
+let leituraInterval, comandoInterval;
+
+function iniciarLeitura() {
+    if (leituraInterval) clearInterval(leituraInterval);
+    leituraInterval = setInterval(atualizarDados, 200);
+}
+function pararLeitura() {
+    if (leituraInterval) { clearInterval(leituraInterval); leituraInterval = null; }
+}
+function iniciarEnvio() {
+    if (comandoInterval) clearInterval(comandoInterval);
+    comandoInterval = setInterval(enviarComandoManual, 1000);
+}
+function pararEnvio() {
+    if (comandoInterval) { clearInterval(comandoInterval); comandoInterval = null; }
+}
+
+// Estado inicial do servidor
+fetch('/estado_modo')
+  .then(r => r.json())
+  .then(j => {
+    modoManual = j.modo_manual;
+    btnModo.innerText = modoManual ? 'Modo: Manual' : 'Modo: Automatico';
+    if (modoManual) {
+        pararLeitura();
+        iniciarEnvio();
+    } else {
+        iniciarLeitura();
+        pararEnvio();
+    }
+  });
+
+btnModo.addEventListener('click', async () => {
+    if (!modoManual) {
+        // Quando for ativar o modo manual, pede o codigo
+        const codigo = prompt("Insira o codigo de acesso para ativar o modo manual:");
+        const codigoCorreto = "1234";  // Defina aqui o codigo que quiser
+
+        if (codigo !== codigoCorreto) {
+            alert("Codigo incorreto! A ativaÃ§ao foi cancelada.");
+            return;  // Nao ativa o modo manual
+        }
+    }
+
+    modoManual = !modoManual;
+    const res = await fetch('/estado_modo', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modo_manual: modoManual })
+    });
+    if (!res.ok) { 
+        console.error('Falha ao alternar modo'); 
+        return; 
+    }
+
+    btnModo.innerText = modoManual ? 'Modo: Manual' : 'Modo: Automatico';
+    if (modoManual) {
+        pararLeitura();
+        iniciarEnvio();
+    } else {
+        pararEnvio();
+        iniciarLeitura();
+    }
+});
+
+
+const btnConsole = document.getElementById('btn-console');
+const preConsole = document.getElementById('serial-console');
+let consoleVisivel = false;
+
+btnConsole.addEventListener('click', async () => {
+    consoleVisivel = !consoleVisivel;
+    preConsole.style.display = consoleVisivel ? 'block' : 'none';
+    btnConsole.textContent   = consoleVisivel ? 'Ocultar Terminal' : 'Ver Terminal';
+    if (consoleVisivel) atualizarConsole();
+});
+
+async function atualizarConsole() {
+    if (!consoleVisivel) return;
+    try {
+        const r = await fetch('/serial_console');
+        const linhas = await r.json();   // [{ts:'12:01',msg:'...'}, ...]
+        preConsole.textContent = linhas
+            .map(l => `[${l.ts}] ${l.msg}`)
+            .join('\n');  // barra simples para quebra de linha funcionar em <pre>
+        preConsole.scrollTop = preConsole.scrollHeight;
+    } catch(e) { 
+        console.error(e); 
+    }
+    setTimeout(atualizarConsole, 1 );
+}
+
+
+</script>
+</body>
+</html>
+        
 
