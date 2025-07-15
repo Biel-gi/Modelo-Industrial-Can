@@ -1,0 +1,73 @@
+from flask import Flask, render_template, jsonify, request
+import json
+import os
+
+
+app = Flask(__name__)
+#CORS(app)  # Permite chamadas AJAX de outros dispositivos na rede
+
+def ler_dados():
+    try:
+        with open("dados.json", "r") as f:
+            dados = json.load(f)
+        return dados[-1] if dados else {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def ler_estado_modo():
+    try:
+        with open("estado_modo.json", "r") as f:
+            return json.load(f)
+    except:
+        return {"modo_manual": False}
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/dados')
+def dados():
+    return jsonify(ler_dados())
+
+@app.route('/estado_modo', methods=['GET', 'POST'])
+def estado_modo():
+    if request.method == 'GET':
+        return jsonify(ler_estado_modo())
+    elif request.method == 'POST':
+        novo_estado = request.json.get("modo_manual", False)
+        with open("estado_modo.json", "w") as f:
+            json.dump({"modo_manual": novo_estado}, f)
+        return jsonify({"modo_manual": novo_estado})
+
+@app.route('/comando', methods=['POST'])
+def comando():
+    dados = request.json
+    try:
+        comando_data = {
+            "motor": dados["motor"],
+            "buzzer": dados["buzzer"],
+            "led1": dados["led1"],
+            "led2": dados["led2"],
+            "led3": dados["led3"],
+            "enviar": True
+        }
+
+        with open("comando.json", "w") as f:
+            json.dump(comando_data, f, indent=4)
+
+        return jsonify({"status": "ok", "comando": comando_data})
+    except Exception as e:
+        return jsonify({"status": "erro", "mensagem": str(e)}), 400
+
+@app.route('/serial_console')
+def serial_console():
+    try:
+        with open("serial_log.json") as f:
+            linhas = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        linhas = []
+    return jsonify(list(reversed(linhas)))   # devolve mais recente primeiro
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
